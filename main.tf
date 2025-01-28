@@ -94,3 +94,11 @@ resource "aws_s3_bucket_cors_configuration" "raw_data_cors" {
     max_age_seconds = 3000
   }
 }
+
+# Create `raw` folder in s3
+resource "aws_s3_object" "raw_folder" {
+  bucket = aws_s3_bucket.raw_data.id
+  key    = "raw/"
+  content_type = "application/x-directory"
+}
+
