@@ -1,1 +1,22 @@
 /data
+/cert
+
+# Terraform files
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+tfplan
+
+# Python files (if you'll be using Python)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+.venv/
+
+# IDE files
+.vscode/
+.idea/
