@@ -1,5 +1,6 @@
 /data
 /cert
+/trash
 
 # Terraform files
 .terraform/
