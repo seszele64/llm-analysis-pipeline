@@ -24,3 +24,7 @@ package/
 # IDE files
 .vscode/
 .idea/
+
+# other files
+## docs
+*.md
