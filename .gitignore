@@ -1,6 +1,11 @@
 /data
 /cert
 /trash
+## docs of various aspects of code structure
+/aws
+/docs
+/plan
+/terraform
 
 # Terraform files
 .terraform/
