@@ -18,6 +18,9 @@ __pycache__/
 venv/
 .venv/
 
+# Making module for Lambda function
+package/
+
 # IDE files
 .vscode/
 .idea/
