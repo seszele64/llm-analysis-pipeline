@@ -3,8 +3,10 @@ import json
 import logging
 import requests
 import boto3
+import time
 from typing import TypedDict, Optional
 from botocore.exceptions import ClientError
+from decimal import Decimal
 
 # Set up logging
 logger = logging.getLogger()
@@ -22,6 +24,25 @@ def get_secret(secret_name: str) -> str:
         return response['SecretString']
     except ClientError as e:
         logger.error(f"Error retrieving secret: {e}")
+        raise e
+
+def write_to_dynamodb(review_id: str, sentiment: str, confidence: float) -> None:
+    """Write sentiment analysis results to DynamoDB"""
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table('classification_results')  # Make sure this matches your table name
+    
+    try:
+        response = table.put_item(
+            Item={
+                'id': review_id,
+                'Sentiment': sentiment,
+                'Confidence': Decimal(str(confidence)),  # Convert float to Decimal
+                'Timestamp': Decimal(str(int(time.time())))  # Convert timestamp to Decimal as well
+            }
+        )
+        logger.info(f"Successfully wrote to DynamoDB for review_id: {review_id}")
+    except ClientError as e:
+        logger.error(f"Error writing to DynamoDB: {e}")
         raise e
 
 def analyze_sentiment(text: str) -> SentimentResult:
@@ -67,48 +88,32 @@ def analyze_sentiment(text: str) -> SentimentResult:
             json=payload
         )
         
-        # Log the raw response
-        logger.info(f"API Response Status Code: {response.status_code}")
-        logger.info(f"API Raw Response: {response.text[:500]}...")  # Truncated for readability
+        if response.status_code != 200:
+            logger.error(f"API request failed with status code: {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            raise Exception(f"API request failed: {response.status_code}")
         
-        # Check response status
-        response.raise_for_status()
+        # Parse the response
+        response_json = response.json()
+        sentiment_data = json.loads(response_json['choices'][0]['message']['content'])
         
-        # Parse response
-        result = response.json()
-        content = json.loads(result['choices'][0]['message']['content'])
-        
-        logger.info(f"Parsed sentiment result: {content}")
-        
-        return SentimentResult(
-            sentiment=content['sentiment'],
-            confidence=content['confidence']
-        )
-    except requests.exceptions.RequestException as e:
-        logger.error(f"API request failed: {e}")
-        logger.error(f"Response content: {getattr(e.response, 'text', 'No response content')}")
-        raise e
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON response: {e}")
-        logger.error(f"Problematic JSON content: {response.text}")
-        raise e
+        return {
+            'sentiment': sentiment_data['sentiment'],
+            'confidence': float(sentiment_data['confidence'])
+        }
     except Exception as e:
-        logger.error(f"Error in sentiment analysis: {e}")
+        logger.error(f"Error in analyze_sentiment: {e}")
         raise e
 
-def lambda_handler(event: dict, context: object) -> dict:
-    """Main Lambda function handler"""
+def lambda_handler(event, context):
+    """Lambda function handler"""
     try:
-        logger.info("Received event: " + json.dumps(event))
-        
         results = []
-        # Process DynamoDB stream records
+        
+        # Process each record in the event
         for record in event.get('Records', []):
-            logger.info(f"Processing record: {json.dumps(record)}")
-            
-            if record['eventName'] in ('INSERT', 'MODIFY'):
-                # Extract review text from NewImage
-                new_image = record['dynamodb'].get('NewImage', {})
+            if record.get('eventName') == 'INSERT':
+                new_image = record.get('dynamodb', {}).get('NewImage', {})
                 review_text = new_image.get('review_comment_message', {}).get('S', '')
                 review_id = new_image.get('review_id', {}).get('S', '')
                 
@@ -123,6 +128,13 @@ def lambda_handler(event: dict, context: object) -> dict:
                 logger.info(f"Starting sentiment analysis for review_id: {review_id}")
                 sentiment_result = analyze_sentiment(review_text)
                 logger.info(f"Sentiment analysis completed for review_id: {review_id}. Result: {sentiment_result}")
+                
+                # Write results to DynamoDB
+                try:
+                    write_to_dynamodb(review_id, sentiment_result['sentiment'], sentiment_result['confidence'])
+                except Exception as e:
+                    logger.error(f"Failed to write to DynamoDB for review_id: {review_id}. Error: {e}")
+                    raise e
                 
                 results.append({
                     'review_id': review_id,
