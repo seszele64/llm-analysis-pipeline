@@ -1,11 +1,10 @@
 import os
 import json
 import logging
+import requests
 import boto3
 from typing import TypedDict, Optional
 from botocore.exceptions import ClientError
-from groq import Groq, AsyncGroq
-from groq.types.chat import ChatCompletion
 
 # Set up logging
 logger = logging.getLogger()
@@ -25,57 +24,129 @@ def get_secret(secret_name: str) -> str:
         logger.error(f"Error retrieving secret: {e}")
         raise e
 
-async def analyze_sentiment(text: str) -> SentimentResult:
-    """Analyze sentiment using Groq API"""
+def analyze_sentiment(text: str) -> SentimentResult:
+    """Analyze sentiment using OpenRouter API"""
     try:
-        # Initialize Groq client
+        # Initialize API configuration
         api_key = get_secret("groq-api-key")
-        client = AsyncGroq(api_key=api_key)
+        logger.info(f"API key retrieved successfully (length: {len(api_key)})")
         
-        # Create chat completion request
-        completion: ChatCompletion = await client.chat.completions.create(
-            messages=[{
-                "role": "user",
-                "content": f"Analyze the sentiment of this text: {text}. Return only JSON with 'sentiment' and 'confidence' fields."
-            }],
-            model="deepseek-r1-distill-llama-70b",
-            temperature=0.7,
-            max_tokens=100,
-            response_format={"type": "json_object"}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Log the input text (truncated for safety)
+        truncated_text = text[:100] + "..." if len(text) > 100 else text
+        logger.info(f"Analyzing sentiment for text: {truncated_text}")
+        
+        # Prepare the request payload
+        payload = {
+            "model": "microsoft/phi-4",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a sentiment analyzer. You must respond with valid JSON containing exactly two fields: 'sentiment' (string: positive, negative, or neutral) and 'confidence' (float between 0 and 1)."
+                },
+                {
+                    "role": "user",
+                    "content": f"Analyze the sentiment of this text: {text}"
+                }
+            ],
+            "temperature": 0.3,
+            "max_tokens": 100,
+            "response_format": {"type": "json_object"}
+        }
+        
+        logger.info("Making API request to OpenRouter...")
+        
+        # Make the API request
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload
         )
         
-        # Parse and return the result
-        result = json.loads(completion.choices[0].message.content)
+        # Log the raw response
+        logger.info(f"API Response Status Code: {response.status_code}")
+        logger.info(f"API Raw Response: {response.text[:500]}...")  # Truncated for readability
+        
+        # Check response status
+        response.raise_for_status()
+        
+        # Parse response
+        result = response.json()
+        content = json.loads(result['choices'][0]['message']['content'])
+        
+        logger.info(f"Parsed sentiment result: {content}")
+        
         return SentimentResult(
-            sentiment=result['sentiment'],
-            confidence=result['confidence']
+            sentiment=content['sentiment'],
+            confidence=content['confidence']
         )
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request failed: {e}")
+        logger.error(f"Response content: {getattr(e.response, 'text', 'No response content')}")
+        raise e
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response: {e}")
+        logger.error(f"Problematic JSON content: {response.text}")
+        raise e
     except Exception as e:
         logger.error(f"Error in sentiment analysis: {e}")
         raise e
 
-async def lambda_handler(event: dict, context: object) -> dict:
+def lambda_handler(event: dict, context: object) -> dict:
     """Main Lambda function handler"""
     try:
         logger.info("Received event: " + json.dumps(event))
         
-        # Extract review text from event
-        review_text = event.get('review_text', '')
-        if not review_text:
-            raise ValueError("No review text found in event")
+        results = []
+        # Process DynamoDB stream records
+        for record in event.get('Records', []):
+            logger.info(f"Processing record: {json.dumps(record)}")
+            
+            if record['eventName'] in ('INSERT', 'MODIFY'):
+                # Extract review text from NewImage
+                new_image = record['dynamodb'].get('NewImage', {})
+                review_text = new_image.get('review_comment_message', {}).get('S', '')
+                review_id = new_image.get('review_id', {}).get('S', '')
+                
+                logger.info(f"Processing review_id: {review_id}")
+                logger.info(f"Review text: {review_text[:200]}...")  # Log first 200 chars
+                
+                if not review_text:
+                    logger.warning(f"No review text found for review_id: {review_id}")
+                    continue
+                
+                # Perform sentiment analysis
+                logger.info(f"Starting sentiment analysis for review_id: {review_id}")
+                sentiment_result = analyze_sentiment(review_text)
+                logger.info(f"Sentiment analysis completed for review_id: {review_id}. Result: {sentiment_result}")
+                
+                results.append({
+                    'review_id': review_id,
+                    'review_text': review_text,
+                    'sentiment': sentiment_result['sentiment'],
+                    'confidence': sentiment_result['confidence']
+                })
         
-        # Perform sentiment analysis
-        sentiment_result = await analyze_sentiment(review_text)
+        if results:
+            logger.info(f"Successfully processed {len(results)} records")
+            logger.info(f"Final results: {json.dumps(results)}")
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'results': results})
+            }
         
+        logger.warning("No valid records found to process")
         return {
-            'statusCode': 200,
-            'body': json.dumps({
-                'sentiment': sentiment_result['sentiment'],
-                'confidence': sentiment_result['confidence']
-            })
+            'statusCode': 400,
+            'body': json.dumps("No valid records found")
         }
     except Exception as e:
         logger.error(f"Error in lambda_handler: {e}")
+        logger.error(f"Full error traceback:", exc_info=True)
         return {
             'statusCode': 500,
             'body': json.dumps(f"Error: {str(e)}")
