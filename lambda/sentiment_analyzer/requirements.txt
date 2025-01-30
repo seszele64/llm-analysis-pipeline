@@ -1,3 +1,6 @@
+exceptiongroup>=1.2.0
 groq
 pytest
 boto3
+pydantic>=1.10.0,<2.0.0
+requests>=2.31.0
