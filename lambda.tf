@@ -4,7 +4,7 @@ resource "aws_secretsmanager_secret" "groq_api_key" {
 
 resource "aws_secretsmanager_secret_version" "groq_api_key_version" {
   secret_id     = aws_secretsmanager_secret.groq_api_key.id
-  secret_string = "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"
+  secret_string = "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"
 }
 
 resource "aws_lambda_function" "sentiment_analyzer" {
@@ -41,21 +41,6 @@ resource "aws_iam_role_policy" "lambda_secrets_manager" {
       }
     ]
   })
-}
-
-# DynamoDB Stream Trigger Configuration
-resource "aws_dynamodb_table" "olist_order_reviews" {
-  name           = "olist_order_reviews"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "review_id"
-
-  attribute {
-    name = "review_id"
-    type = "S"
-  }
-
-  stream_enabled   = true
-  stream_view_type = "NEW_IMAGE"
 }
 
 resource "aws_lambda_event_source_mapping" "dynamodb_trigger" {
