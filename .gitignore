@@ -32,7 +32,6 @@ package/
 
 # other files
 ## docs
-*.md
 *.zip
 
 # Terraform variables files
