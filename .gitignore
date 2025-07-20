@@ -34,3 +34,6 @@ package/
 ## docs
 *.md
 *.zip
+
+# Terraform variables files
+*.tfvars
