@@ -4,7 +4,7 @@ resource "aws_secretsmanager_secret" "groq_api_key" {
 
 resource "aws_secretsmanager_secret_version" "groq_api_key_version" {
   secret_id     = aws_secretsmanager_secret.groq_api_key.id
-  secret_string = "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"
+  secret_string = var.groq_api_key
 }
 
 resource "aws_lambda_function" "sentiment_analyzer" {
